@@ -242,7 +242,13 @@ def get_sheet_data(spreadsheet_id: str,
             Default is False (returns values only, more efficient).
     
     Returns:
-        Grid data structure with either full metadata or just values from Google Sheets API, depending on include_grid_data parameter
+        If include_grid_data is True: full grid data structure with metadata from the
+        Google Sheets API, with an 'a1Address' field injected into every cell object.
+        If False (default): an object with 'spreadsheetId' and 'valueRanges', where
+        'values' is a list of rows keyed by A1 cell address,
+        e.g. [{'A1': 'Header', 'B1': 'Name'}, {'A2': 'x', 'B2': 'y'}]. Only non-empty
+        cells appear as keys (the API omits trailing empty cells), so a missing key
+        means an empty cell. Use these addresses directly with update tools.
     """
     sheets_service = ctx.request_context.lifespan_context.sheets_service
 
@@ -259,6 +265,9 @@ def get_sheet_data(spreadsheet_id: str,
             ranges=[full_range],
             includeGridData=True
         ).execute()
+        # Inject A1 addresses into every cell so values can be referenced
+        # directly in update tools without counting rows/columns
+        _annotate_grid_data_addresses(result)
     else:
         # Use values API to get cell values only (more efficient)
         values_result = sheets_service.spreadsheets().values().get(
@@ -266,12 +275,14 @@ def get_sheet_data(spreadsheet_id: str,
             range=full_range
         ).execute()
         
-        # Format the response to match expected structure
+        # Format the response with A1-addressed rows so every value can be
+        # referenced directly in update tools without counting rows/columns
+        api_range = values_result.get('range', full_range)
         result = {
             'spreadsheetId': spreadsheet_id,
             'valueRanges': [{
-                'range': full_range,
-                'values': values_result.get('values', [])
+                'range': api_range,
+                'values': _address_values(values_result.get('values', []), api_range)
             }]
         }
 
@@ -286,7 +297,7 @@ def get_sheet_data(spreadsheet_id: str,
 def get_sheet_formulas(spreadsheet_id: str,
                        sheet: str,
                        range: Optional[str] = None,
-                       ctx: Context = None) -> List[List[Any]]:
+                       ctx: Context = None) -> List[Dict[str, Any]]:
     """
     Get formulas from a specific sheet in a Google Spreadsheet.
     
@@ -296,7 +307,8 @@ def get_sheet_formulas(spreadsheet_id: str,
         range: Optional cell range in A1 notation (e.g., 'A1:C10'). If not provided, gets all formulas from the sheet.
     
     Returns:
-        A 2D array of the sheet formulas.
+        A list of rows keyed by A1 cell address, e.g. [{'A1': '=SUM(B1:B10)'}].
+        Only non-empty cells appear as keys. Use these addresses directly with update tools.
     """
     sheets_service = ctx.request_context.lifespan_context.sheets_service
     
@@ -313,9 +325,9 @@ def get_sheet_formulas(spreadsheet_id: str,
         valueRenderOption='FORMULA'  # Request formulas
     ).execute()
     
-    # Get the formulas from the response
+    # Get the formulas from the response, keyed by A1 cell address
     formulas = result.get('values', [])
-    return formulas
+    return _address_values(formulas, result.get('range', full_range))
 
 @tool(
     annotations=ToolAnnotations(
@@ -717,8 +729,10 @@ def get_multiple_sheet_data(queries: List[Dict[str, str]],
                            {'spreadsheet_id': 'xyz', 'sheet': 'Data', 'range': 'C1:C10'}]
     
     Returns:
-        A list of dictionaries, each containing the original query parameters 
-        and the fetched 'data' or an 'error'.
+        A list of dictionaries, each containing the original query parameters
+        and the fetched 'data' (a list of rows keyed by A1 cell address, e.g.
+        [{'A1': 'Header'}, {'A2': 'x'}]) or an 'error'. Only non-empty cells
+        appear as keys.
     """
     sheets_service = ctx.request_context.lifespan_context.sheets_service
     results = []
@@ -742,9 +756,10 @@ def get_multiple_sheet_data(queries: List[Dict[str, str]],
                 range=full_range
             ).execute()
             
-            # Get the values from the response
+            # Get the values from the response, keyed by A1 cell address
             values = result.get('values', [])
-            results.append({**query, 'data': values})
+            addressed = _address_values(values, result.get('range', full_range))
+            results.append({**query, 'data': addressed})
 
         except Exception as e:
             results.append({**query, 'error': str(e)})
@@ -770,8 +785,9 @@ def get_multiple_spreadsheet_summary(spreadsheet_ids: List[str],
         rows_to_fetch: The number of rows (including header) to fetch for the summary (default: 5).
     
     Returns:
-        A list of dictionaries, each representing a spreadsheet summary. 
-        Includes spreadsheet title, sheet summaries (title, headers, first rows), or an error.
+        A list of dictionaries, each representing a spreadsheet summary.
+        Includes spreadsheet title, sheet summaries (title, headers, first rows
+        keyed by A1 cell address), or an error.
     """
     sheets_service = ctx.request_context.lifespan_context.sheets_service
     summaries = []
@@ -825,7 +841,10 @@ def get_multiple_spreadsheet_summary(spreadsheet_ids: List[str],
                     if values:
                         sheet_summary['headers'] = values[0]
                         if len(values) > 1:
-                            sheet_summary['first_rows'] = values[1:max_row]
+                            # Data rows start at row 2 (row 1 is the header)
+                            sheet_summary['first_rows'] = _address_values(
+                                values[1:max_row], f"{sheet_title}!A2"
+                            )
                     else:
                         # Handle empty sheets or sheets with less data than requested
                         sheet_summary['headers'] = []
@@ -1285,6 +1304,75 @@ def _parse_a1_notation(range_str: str) -> Dict[str, int]:
     elif start_row:
         result['endRowIndex'] = result['startRowIndex'] + 1
     
+    return result
+
+
+def _address_values(values: List[List[Any]], range_str: str) -> List[Dict[str, Any]]:
+    """
+    Convert a raw 2D values array into a list of rows keyed by A1 cell address.
+
+    Each row becomes a dictionary mapping the cell's A1 address (e.g., 'B2')
+    to its value, so callers can reference cells directly in update tools
+    without counting rows/columns. Only cells returned by the API appear as
+    keys (the Values API omits trailing empty cells/rows, so missing keys
+    mean empty cells).
+
+    Args:
+        values: 2D array of values from the Sheets Values API.
+        range_str: A1 notation range the values start from, optionally prefixed
+            with a sheet name (e.g., 'Sheet1!B2:D10'). If there is no explicit
+            start cell (e.g., a bare sheet name), an A1 anchor is assumed.
+
+    Returns:
+        List of dictionaries, one per row, keyed by A1 cell address.
+    """
+    anchor = range_str.rsplit('!', 1)[-1] if '!' in range_str else ''
+    start_col = 0
+    start_row = 0
+    if anchor:
+        try:
+            parsed = _parse_a1_notation(anchor)
+            start_col = parsed.get('startColumnIndex', 0)
+            start_row = parsed.get('startRowIndex', 0)
+        except ValueError:
+            pass  # Unparseable anchor - fall back to A1
+
+    addressed_rows = []
+    for row_offset, row in enumerate(values):
+        row_number = start_row + row_offset + 1
+        addressed_rows.append({
+            f"{_column_index_to_letter(start_col + col_offset)}{row_number}": value
+            for col_offset, value in enumerate(row)
+        })
+    return addressed_rows
+
+
+def _annotate_grid_data_addresses(result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Inject an 'a1Address' field into every cell of a grid data response.
+
+    The Sheets API grid format (from spreadsheets.get with includeGridData=True)
+    is purely positional: cells live in rowData[].values[] arrays with offsets
+    given by GridData startRow/startColumn. This annotates each cell object in
+    place with its A1 address (e.g., 'B2') so consumers can reference cells
+    directly without positional math.
+
+    Args:
+        result: Response of spreadsheets.get with includeGridData=True.
+
+    Returns:
+        The same response object, mutated in place.
+    """
+    for sheet_data in result.get('sheets', []):
+        for grid_data in sheet_data.get('data', []):
+            start_row = grid_data.get('startRow', 0)
+            start_col = grid_data.get('startColumn', 0)
+            for row_offset, row_data in enumerate(grid_data.get('rowData', [])):
+                for col_offset, cell in enumerate(row_data.get('values', [])):
+                    cell['a1Address'] = (
+                        f"{_column_index_to_letter(start_col + col_offset)}"
+                        f"{start_row + row_offset + 1}"
+                    )
     return result
 
 

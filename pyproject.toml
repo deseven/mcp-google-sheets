@@ -14,10 +14,14 @@ dependencies = [
 name = "Xing Wu"
 email = "xingwu.cs@gmail.com"
 
+[[project.authors]]
+name = "Ivan Novohatski"
+email = "github@d7.wtf"
+
 [project.urls]
-"Homepage" = "https://github.com/xing5/mcp-google-sheets"
-"Bug Tracker" = "https://github.com/xing5/mcp-google-sheets/issues"
-"Repository" = "https://github.com/xing5/mcp-google-sheets.git"
+"Homepage" = "https://github.com/deseven/mcp-google-sheets"
+"Bug Tracker" = "https://github.com/deseven/mcp-google-sheets/issues"
+"Repository" = "https://github.com/deseven/mcp-google-sheets.git"
 
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning"]

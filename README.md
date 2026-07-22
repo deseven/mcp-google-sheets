@@ -7,11 +7,19 @@
     <i>Your AI Assistant's Gateway to Google Sheets! </i>📊
   </p>
 
-[![PyPI - Version](https://img.shields.io/pypi/v/mcp-google-sheets)](https://pypi.org/project/mcp-google-sheets/)
-[![PyPI Downloads](https://static.pepy.tech/badge/mcp-google-sheets)](https://pepy.tech/projects/mcp-google-sheets)
-![GitHub License](https://img.shields.io/github/license/xing5/mcp-google-sheets)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/xing5/mcp-google-sheets/release.yml)
+![GitHub License](https://img.shields.io/github/license/deseven/mcp-google-sheets)
 </div>
+
+> [!NOTE]
+> **This is a fork of [xing5/mcp-google-sheets](https://github.com/xing5/mcp-google-sheets).**
+>
+> **Why?** In the upstream server, read tools (`get_sheet_data`, `get_sheet_formulas`, etc.) return raw unnamed 2D arrays of values, while write tools (`update_cells`, `batch_update_cells`) require A1 cell addresses (e.g. `B2`). To edit a specific cell, the model has to count rows and columns by hand — extremely error-prone and can cause wrong-cell writes via destructive tools.
+>
+> It's a clear design flaw: **write tools require cell IDs, read tools don't provide them**. The original author [decided to not address it](https://github.com/xing5/mcp-google-sheets/issues/8), hence the reason for the fork.
+>
+> **What changed:** every read tool now returns **A1-addressed output** — each row is a map of cell address → value (e.g. `{"B2": "x"}`), so the exact identifier needed for a subsequent edit is always present in the read result. See the tool reference below for details.
+>
+> This fork is not published to PyPI. Run it directly from this repository with `uvx` (see Quick Start below).
 
 ---
 
@@ -23,9 +31,9 @@
 
 ## 🚀 Quick Start (Using `uvx`)
 
-Essentially the server runs in one line: `uvx mcp-google-sheets@latest`. 
+Essentially the server runs in one line: `uvx git+https://github.com/deseven/mcp-google-sheets.git@main`.
 
-This command will automatically download the latest code and run it. **We recommend always using `@latest`** to ensure you have the newest version with the latest features and bug fixes.
+This command will automatically download the code from this repository and run it — no PyPI package or local clone required. The `@main` suffix pins the git ref; use a tag or commit for reproducible installs.
 
 _Refer to the [ID Reference Guide](#-id-reference-guide) for more information about the IDs used below._
 
@@ -66,13 +74,13 @@ _Refer to the [ID Reference Guide](#-id-reference-guide) for more information ab
     *   ➡️ See [**Detailed Authentication & Environment Variables**](#-authentication--environment-variables-detailed) for other options (OAuth, `CREDENTIALS_CONFIG`).
 
 4.  **🏃 Run the Server!**
-    *   `uvx` will automatically download and run the latest version of `mcp-google-sheets`:
+    *   `uvx` will automatically download and run the server from this repository:
         ```bash
-        uvx mcp-google-sheets@latest
+        uvx git+https://github.com/deseven/mcp-google-sheets.git@main
         ```
     *   The server will start and print logs indicating it's ready.
     *   
-    *   > **💡 Pro Tip:** Always use `@latest` to ensure you get the newest version with bug fixes and features. Without `@latest`, `uvx` may use a cached older version.
+    *   > **💡 Pro Tip:** `uvx` caches git builds. After new commits land on the pinned ref, run `uvx --refresh git+https://github.com/deseven/mcp-google-sheets.git@main` to pick them up, or pin a specific tag/commit for reproducibility.
 
 5.  **🔌 Connect your MCP Client**
     *   Configure your client (e.g., Claude Desktop) to connect to the running server.
@@ -89,10 +97,11 @@ You're ready! Start issuing commands via your MCP client.
 
 ## ✨ Key Features
 
+*   **A1-Addressed Reads:** Read tools return cells keyed by A1 address (e.g. `{"B2": "x"}`), so follow-up edits never require manual row/column counting.
 *   **Seamless Integration:** Connects directly to Google Drive & Google Sheets APIs.
 *   **Comprehensive Tools:** Offers a wide range of operations (CRUD, listing, batching, sharing, formatting, etc.).
 *   **Flexible Authentication:** Supports **Service Accounts (recommended)**, OAuth 2.0, and direct credential injection via environment variables.
-*   **Easy Deployment:** Run instantly with `uvx` (zero-install feel) or clone for development using `uv`.
+*   **Easy Deployment:** Run instantly with `uvx` straight from this git repo (zero-install feel) or clone for development using `uv`.
 *   **AI-Ready:** Designed for use with MCP-compatible clients, enabling natural language spreadsheet interaction.
 *   **Tool Filtering:** Reduce context window usage by enabling only the tools you need with `--include-tools` or `ENABLED_TOOLS` environment variable.
 
@@ -115,7 +124,7 @@ You can filter tools using either:
        "google-sheets": {
          "command": "uvx",
          "args": [
-           "mcp-google-sheets@latest",
+           "git+https://github.com/deseven/mcp-google-sheets.git@main",
            "--include-tools",
            "get_sheet_data,update_cells,list_spreadsheets,list_sheets"
          ],
@@ -133,7 +142,7 @@ You can filter tools using either:
      "mcpServers": {
        "google-sheets": {
          "command": "uvx",
-         "args": ["mcp-google-sheets@latest"],
+         "args": ["git+https://github.com/deseven/mcp-google-sheets.git@main"],
          "env": {
            "SERVICE_ACCOUNT_PATH": "/path/to/credentials.json",
            "ENABLED_TOOLS": "get_sheet_data,update_cells,list_spreadsheets,list_sheets"
@@ -198,12 +207,12 @@ _Refer to the [ID Reference Guide](#-id-reference-guide) for more information ab
     *   `sheet` (string): Name of the sheet/tab (e.g., "Sheet1").
     *   `range` (optional string): A1 notation (e.g., `'A1:C10'`, `'Sheet1!B2:D'`). If omitted, reads the whole sheet/tab specified by `sheet`.
     *   `include_grid_data` (optional boolean, default `False`): If `True`, returns full grid data including formatting and metadata (much larger). If `False`, returns values only (more efficient).
-    *   _Returns:_ If `include_grid_data=True`, full grid data with metadata ([`get` response](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/get#response-body)). If `False`, a values result object from the Values API ([`values.get` response](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets.values/get#response-body)).
+    *   _Returns:_ If `include_grid_data=True`, full grid data with metadata ([`get` response](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/get#response-body)) with an `a1Address` field injected into every cell object. If `False`, an object with `spreadsheetId` and `valueRanges`, where `values` is a list of rows keyed by A1 cell address, e.g. `[{"A1": "Header", "B1": "Name"}, {"A2": "x", "B2": "y"}]`. Only non-empty cells appear as keys (trailing empty cells are omitted), so a missing key means an empty cell. These addresses can be passed directly to `update_cells`/`batch_update_cells`.
 *   **`get_sheet_formulas`**: Reads formulas from a range in a sheet/tab.
     *   `spreadsheet_id` (string): The spreadsheet ID (from its URL).
     *   `sheet` (string): Name of the sheet/tab (e.g., "Sheet1").
     *   `range` (optional string): A1 notation (e.g., `'A1:C10'`, `'Sheet1!B2:D'`). If omitted, reads all formulas in the sheet/tab specified by `sheet`.
-    *   _Returns:_ 2D array of cell formulas (array of arrays) ([`values.get` response](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets.values/get#response-body)).
+    *   _Returns:_ List of rows keyed by A1 cell address, e.g. `[{"A1": "=SUM(B1:B10)"}, {"A2": "=B2*2"}]`. Only non-empty cells appear as keys.
 *   **`update_cells`**: Writes data to a specific range. Overwrites existing data.
     *   `spreadsheet_id` (string): The spreadsheet ID (from its URL).
     *   `sheet` (string): Name of the sheet/tab (e.g., "Sheet1").
@@ -230,11 +239,11 @@ _Refer to the [ID Reference Guide](#-id-reference-guide) for more information ab
     *   _Returns:_ New sheet properties object.
 *   **`get_multiple_sheet_data`**: Fetches data from multiple ranges across potentially different spreadsheets in one call.
     *   `queries` (array of objects): Each object needs `spreadsheet_id`, `sheet`, and `range`. Example: `[{"spreadsheet_id": "abc", "sheet": "Sheet1", "range": "A1:B2"}, ...]`.
-    *   _Returns:_ List of objects, each containing the query params and fetched `data` or an `error`. Each `data` is a [`values.get` response](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets.values/get#response-body).
+    *   _Returns:_ List of objects, each containing the query params and fetched `data` or an `error`. Each `data` is a list of rows keyed by A1 cell address, e.g. `[{"A1": "Header"}, {"A2": "x"}]`. Only non-empty cells appear as keys.
 *   **`get_multiple_spreadsheet_summary`**: Gets titles, sheet/tab names, headers, and first few rows for multiple spreadsheets.
     *   `spreadsheet_ids` (array of strings): IDs of the spreadsheets (from their URLs).
     *   `rows_to_fetch` (optional integer, default `5`): How many rows (including header) to preview. Example: `5`.
-    *   _Returns:_ List of summary objects for each spreadsheet.
+    *   _Returns:_ List of summary objects for each spreadsheet. Sheet summaries contain `headers` (list of column titles from row 1) and `first_rows` (list of data rows keyed by A1 cell address, e.g. `[{"A2": "x", "B2": "y"}]`).
 *   **`share_spreadsheet`**: Shares a spreadsheet with specified users/emails and roles.
     *   `spreadsheet_id` (string): The spreadsheet ID (from its URL).
     *   `recipients` (array of objects): `[{"email_address": "user@example.com", "role": "writer"}, ...]`. Roles: `reader`, `commenter`, `writer`.
@@ -315,7 +324,7 @@ _Refer to the [ID Reference Guide](#-id-reference-guide) for more information ab
     3.  **Set Environment Variables:**
         *   `SERVICE_ACCOUNT_PATH`: Full path to the downloaded JSON key file.
         *   `DRIVE_FOLDER_ID`: The ID of the shared Google Drive folder.
-        *(See [Ultra Quick Start](#-ultra-quick-start-using-uvx) for OS-specific examples)*
+        *(See [Quick Start](#-quick-start-using-uvx) for OS-specific examples)*
 
 ### Method B: OAuth 2.0 (Interactive / Personal Use) 🧑‍💻
 
@@ -396,18 +405,18 @@ _Refer to the [ID Reference Guide](#-id-reference-guide) for more information ab
 
 ### Method 1: Using `uvx` (Recommended for Users)
 
-As shown in the [Ultra Quick Start](#-ultra-quick-start-using-uvx), this is the easiest way. Set environment variables, then run:
+As shown in the [Quick Start](#-quick-start-using-uvx), this is the easiest way. Set environment variables, then run:
 
 ```bash
-uvx mcp-google-sheets@latest
+uvx git+https://github.com/deseven/mcp-google-sheets.git@main
 ```
-`uvx` handles fetching and running the package temporarily.
+`uvx` handles fetching the code from git and running it in an isolated environment.
 
 ### Method 2: For Development (Cloning the Repo)
 
 If you want to modify the code:
 
-1.  **Clone:** `git clone https://github.com/yourusername/mcp-google-sheets.git && cd mcp-google-sheets` (Use actual URL)
+1.  **Clone:** `git clone https://github.com/deseven/mcp-google-sheets.git && cd mcp-google-sheets`
 2.  **Set Environment Variables:** As described above.
 3.  **Run using `uv`:** (Uses the local code)
     ```bash
@@ -456,7 +465,7 @@ _Refer to the [ID Reference Guide](#-id-reference-guide) for more information ab
   "mcpServers": {
     "google-sheets": {
       "command": "uvx",
-      "args": ["mcp-google-sheets@latest"],
+      "args": ["git+https://github.com/deseven/mcp-google-sheets.git@main"],
       "env": {
         "SERVICE_ACCOUNT_PATH": "/full/path/to/your/service-account-key.json",
         "DRIVE_FOLDER_ID": "your_shared_folder_id_here"
@@ -472,7 +481,7 @@ _Refer to the [ID Reference Guide](#-id-reference-guide) for more information ab
   "mcpServers": {
     "google-sheets": {
       "command": "/Users/yourusername/.local/bin/uvx",
-      "args": ["mcp-google-sheets@latest"],
+      "args": ["git+https://github.com/deseven/mcp-google-sheets.git@main"],
       "env": {
         "SERVICE_ACCOUNT_PATH": "/full/path/to/your/service-account-key.json",
         "DRIVE_FOLDER_ID": "your_shared_folder_id_here"
@@ -492,7 +501,7 @@ _Refer to the [ID Reference Guide](#-id-reference-guide) for more information ab
   "mcpServers": {
     "google-sheets": {
       "command": "uvx",
-      "args": ["mcp-google-sheets@latest"],
+      "args": ["git+https://github.com/deseven/mcp-google-sheets.git@main"],
       "env": {
         "CREDENTIALS_PATH": "/full/path/to/your/credentials.json",
         "TOKEN_PATH": "/full/path/to/your/token.json"
@@ -514,7 +523,7 @@ _Refer to the [ID Reference Guide](#-id-reference-guide) for more information ab
   "mcpServers": {
     "google-sheets": {
       "command": "uvx",
-      "args": ["mcp-google-sheets@latest"],
+      "args": ["git+https://github.com/deseven/mcp-google-sheets.git@main"],
       "env": {
         "CREDENTIALS_CONFIG": "ewogICJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsCiAgInByb2plY3RfaWQiOiAi...",
         "DRIVE_FOLDER_ID": "your_shared_folder_id_here"
@@ -537,7 +546,7 @@ _Refer to the [ID Reference Guide](#-id-reference-guide) for more information ab
   "mcpServers": {
     "google-sheets": {
       "command": "uvx",
-      "args": ["mcp-google-sheets@latest"],
+      "args": ["git+https://github.com/deseven/mcp-google-sheets.git@main"],
       "env": {
         "GOOGLE_APPLICATION_CREDENTIALS": "/path/to/service-account.json"
       }
@@ -552,7 +561,7 @@ _Refer to the [ID Reference Guide](#-id-reference-guide) for more information ab
   "mcpServers": {
     "google-sheets": {
       "command": "uvx",
-      "args": ["mcp-google-sheets@latest"],
+      "args": ["git+https://github.com/deseven/mcp-google-sheets.git@main"],
       "env": {}
     }
   }

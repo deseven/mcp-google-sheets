@@ -257,6 +257,82 @@ class A1HelperTests(unittest.TestCase):
         )
 
 
+class AddressedValuesTests(unittest.TestCase):
+    def test_address_values_anchors_at_range_start(self):
+        rows = server._address_values([["x", "y"], ["z"]], "Sheet1!B2:C3")
+        self.assertEqual(rows, [{"B2": "x", "C2": "y"}, {"B3": "z"}])
+
+    def test_address_values_defaults_to_a1_for_bare_sheet_name(self):
+        self.assertEqual(server._address_values([["a"]], "Sheet1"), [{"A1": "a"}])
+
+    def test_address_values_handles_column_only_range(self):
+        self.assertEqual(
+            server._address_values([["a", "b"]], "Sheet1!C:D"),
+            [{"C1": "a", "D1": "b"}],
+        )
+
+    def test_address_values_handles_row_only_range(self):
+        self.assertEqual(
+            server._address_values([["a"]], "Sheet1!3:4"),
+            [{"A3": "a"}],
+        )
+
+    def test_address_values_preserves_ragged_rows_with_correct_keys(self):
+        rows = server._address_values([["a", "b", "c"], ["d"], []], "A1:C3")
+        self.assertEqual(
+            rows,
+            [{"A1": "a", "B1": "b", "C1": "c"}, {"A2": "d"}, {}],
+        )
+
+    def test_address_values_extends_beyond_single_letter_columns(self):
+        self.assertEqual(
+            server._address_values([["v"]], "Sheet1!AA10"),
+            [{"AA10": "v"}],
+        )
+
+    def test_address_values_handles_quoted_sheet_names(self):
+        self.assertEqual(
+            server._address_values([["v"]], "'My Sheet'!B5"),
+            [{"B5": "v"}],
+        )
+
+    def test_annotate_grid_data_addresses_injects_a1_field(self):
+        result = {
+            "sheets": [
+                {
+                    "data": [
+                        {
+                            "startRow": 1,
+                            "startColumn": 2,
+                            "rowData": [
+                                {"values": [{"userEnteredValue": {"stringValue": "x"}}]},
+                                {"values": [{}, {"userEnteredValue": {"stringValue": "y"}}]},
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+
+        server._annotate_grid_data_addresses(result)
+
+        cells = result["sheets"][0]["data"][0]["rowData"]
+        self.assertEqual(cells[0]["values"][0]["a1Address"], "C2")
+        self.assertEqual(cells[1]["values"][0]["a1Address"], "C3")
+        self.assertEqual(cells[1]["values"][1]["a1Address"], "D3")
+        # Existing metadata is preserved
+        self.assertEqual(
+            cells[1]["values"][1]["userEnteredValue"], {"stringValue": "y"}
+        )
+
+    def test_annotate_grid_data_addresses_tolerates_missing_parts(self):
+        self.assertEqual(server._annotate_grid_data_addresses({}), {})
+        self.assertEqual(
+            server._annotate_grid_data_addresses({"sheets": [{"data": [{}]}]}),
+            {"sheets": [{"data": [{}]}]},
+        )
+
+
 class ToolRequestConstructionTests(unittest.TestCase):
     def test_get_sheet_data_uses_values_api_by_default(self):
         sheets_service = RecordingSheetsService()
@@ -274,7 +350,9 @@ class ToolRequestConstructionTests(unittest.TestCase):
             result,
             {
                 "spreadsheetId": "spreadsheet-id",
-                "valueRanges": [{"range": "Sheet1!A1:B2", "values": [["a", "b"]]}],
+                "valueRanges": [
+                    {"range": "Sheet1!A1:B2", "values": [{"A1": "a", "B1": "b"}]}
+                ],
             },
         )
         self.assertEqual(
@@ -284,6 +362,93 @@ class ToolRequestConstructionTests(unittest.TestCase):
                 {"spreadsheetId": "spreadsheet-id", "range": "Sheet1!A1:B2"},
             ),
         )
+
+    def test_get_sheet_data_addresses_values_from_api_returned_range(self):
+        sheets_service = RecordingSheetsService()
+        values_resource = sheets_service.spreadsheets_resource.values_resource
+        values_resource.get_results["Sheet1!B2:D4"] = {
+            "range": "Sheet1!B2:D4",
+            "values": [["h1", "h2"], ["v1"]],
+        }
+
+        result = server.get_sheet_data(
+            "spreadsheet-id",
+            "Sheet1",
+            "B2:D4",
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+
+        self.assertEqual(
+            result["valueRanges"][0]["values"],
+            [{"B2": "h1", "C2": "h2"}, {"B3": "v1"}],
+        )
+
+    def test_get_sheet_data_without_range_anchors_at_a1(self):
+        sheets_service = RecordingSheetsService()
+        values_resource = sheets_service.spreadsheets_resource.values_resource
+        values_resource.get_results["Sheet1"] = {"values": [["a", "b"]]}
+
+        result = server.get_sheet_data(
+            "spreadsheet-id",
+            "Sheet1",
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+
+        self.assertEqual(result["valueRanges"][0]["values"], [{"A1": "a", "B1": "b"}])
+
+    def test_get_sheet_formulas_returns_addressed_rows(self):
+        sheets_service = RecordingSheetsService()
+        values_resource = sheets_service.spreadsheets_resource.values_resource
+        values_resource.get_results["Sheet1!D2:D3"] = {
+            "range": "Sheet1!D2:D3",
+            "values": [["=B2*2"], ["=B3*2"]],
+        }
+
+        result = server.get_sheet_formulas(
+            "spreadsheet-id",
+            "Sheet1",
+            "D2:D3",
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+
+        self.assertEqual(result, [{"D2": "=B2*2"}, {"D3": "=B3*2"}])
+
+    def test_get_multiple_sheet_data_returns_addressed_rows(self):
+        sheets_service = RecordingSheetsService()
+        values_resource = sheets_service.spreadsheets_resource.values_resource
+        values_resource.get_results["Sheet1!A1:B2"] = {
+            "range": "Sheet1!A1:B2",
+            "values": [["h1", "h2"], ["v1"]],
+        }
+
+        result = server.get_multiple_sheet_data(
+            [{"spreadsheet_id": "spreadsheet-id", "sheet": "Sheet1", "range": "A1:B2"}],
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+
+        self.assertEqual(
+            result[0]["data"],
+            [{"A1": "h1", "B1": "h2"}, {"A2": "v1"}],
+        )
+
+    def test_get_multiple_spreadsheet_summary_addresses_first_rows(self):
+        sheets_service = RecordingSheetsService()
+        values_resource = sheets_service.spreadsheets_resource.values_resource
+        values_resource.get_results["Sheet1!A1:2"] = {
+            "range": "Sheet1!A1:B2",
+            "values": [["h1", "h2"], ["v1", "v2"]],
+        }
+        values_resource.get_results["Data!A1:2"] = {"values": []}
+
+        result = server.get_multiple_spreadsheet_summary(
+            ["spreadsheet-id"],
+            rows_to_fetch=2,
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+
+        sheet1_summary = result[0]["sheets"][0]
+        self.assertEqual(sheet1_summary["headers"], ["h1", "h2"])
+        self.assertEqual(sheet1_summary["first_rows"], [{"A2": "v1", "B2": "v2"}])
 
     def test_update_cells_uses_user_entered_values(self):
         sheets_service = RecordingSheetsService()

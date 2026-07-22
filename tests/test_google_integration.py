@@ -147,11 +147,11 @@ class GoogleSheetsIntegrationTests(unittest.TestCase):
         self.assertGreaterEqual(update_result.get("updatedCells", 0), 12)
 
         data = server.get_sheet_data(primary_id, "Sheet1", "A1:D3", ctx=self.ctx)
-        self.assertEqual(data["valueRanges"][0]["values"][1][0], "Ada")
-        self.assertEqual(data["valueRanges"][0]["values"][1][1], "42")
+        self.assertEqual(data["valueRanges"][0]["values"][1]["A2"], "Ada")
+        self.assertEqual(data["valueRanges"][0]["values"][1]["B2"], "42")
 
         formulas = server.get_sheet_formulas(primary_id, "Sheet1", "D2:D3", ctx=self.ctx)
-        self.assertEqual(formulas, [["=B2*2"], ["=B3*2"]])
+        self.assertEqual(formulas, [{"D2": "=B2*2"}, {"D3": "=B3*2"}])
 
         batch_cells = server.batch_update_cells(
             primary_id,
@@ -235,7 +235,7 @@ class GoogleSheetsIntegrationTests(unittest.TestCase):
             ctx=self.ctx,
         )
         self.assertEqual(len(multi_data), 2)
-        self.assertEqual(multi_data[0]["data"][1][0], "Ada")
+        self.assertEqual(multi_data[0]["data"][1]["A2"], "Ada")
         self.assertNotIn("error", multi_data[1])
 
         summaries = server.get_multiple_spreadsheet_summary(
