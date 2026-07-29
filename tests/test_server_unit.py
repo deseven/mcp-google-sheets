@@ -610,6 +610,71 @@ class ToolRequestConstructionTests(unittest.TestCase):
 
         self.assertEqual(result, [{"sheet": "Sheet1", "cell": "A2", "value": "Ada Lovelace"}])
 
+    def test_find_in_spreadsheet_with_range_restricts_search_and_fixes_addresses(self):
+        sheets_service = RecordingSheetsService()
+        values_resource = sheets_service.spreadsheets_resource.values_resource
+        # Data starting at B2 (offset: col=1, row=1)
+        values_resource.get_results["Sheet1!B2:D10"] = {
+            "values": [["Name", "Role"], ["Ada Lovelace", "Engineer"]]
+        }
+
+        result = server.find_in_spreadsheet(
+            "spreadsheet-id",
+            "ada",
+            sheet="Sheet1",
+            range="B2:D10",
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+
+        # Only the "B2:D10" range is requested, and cell addresses are offset
+        # so that the first returned row maps to row 2, column B.
+        self.assertEqual(
+            result,
+            [{"sheet": "Sheet1", "cell": "B3", "value": "Ada Lovelace"}],
+        )
+
+    def test_find_in_spreadsheet_with_column_range_searches_single_column(self):
+        sheets_service = RecordingSheetsService()
+        values_resource = sheets_service.spreadsheets_resource.values_resource
+        # A single-column range "B:B" returns one value per row starting at row 1
+        values_resource.get_results["Sheet1!B:B"] = {
+            "values": [["Role"], ["Engineer"], ["Manager"]]
+        }
+
+        result = server.find_in_spreadsheet(
+            "spreadsheet-id",
+            "engineer",
+            sheet="Sheet1",
+            range="B:B",
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+
+        self.assertEqual(
+            result,
+            [{"sheet": "Sheet1", "cell": "B2", "value": "Engineer"}],
+        )
+
+    def test_find_in_spreadsheet_with_row_range_searches_single_row(self):
+        sheets_service = RecordingSheetsService()
+        values_resource = sheets_service.spreadsheets_resource.values_resource
+        # A single-row range "5:5" returns one row of values
+        values_resource.get_results["Sheet1!5:5"] = {
+            "values": [["Name", "Role", "Ada"]]
+        }
+
+        result = server.find_in_spreadsheet(
+            "spreadsheet-id",
+            "ada",
+            sheet="Sheet1",
+            range="5:5",
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+
+        self.assertEqual(
+            result,
+            [{"sheet": "Sheet1", "cell": "C5", "value": "Ada"}],
+        )
+
     def test_add_chart_rejects_invalid_chart_type_before_api_call(self):
         sheets_service = RecordingSheetsService()
 

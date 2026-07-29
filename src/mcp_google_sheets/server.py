@@ -1440,6 +1440,7 @@ def _split_chart_source_ranges(source_range: Dict[str, int]) -> tuple[Dict[str, 
 def find_in_spreadsheet(spreadsheet_id: str,
                         query: str,
                         sheet: Optional[str] = None,
+                        range: Optional[str] = None,
                         case_sensitive: bool = False,
                         max_results: int = 50,
                         ctx: Context = None) -> List[Dict[str, Any]]:
@@ -1450,6 +1451,10 @@ def find_in_spreadsheet(spreadsheet_id: str,
         spreadsheet_id: The ID of the spreadsheet (found in the URL)
         query: The text to search for in cell values
         sheet: Optional sheet name to search in. If not provided, searches all sheets.
+        range: Optional cell range in A1 notation (e.g., 'A1:C10', 'B:B', '1:5') to
+               restrict the search to a specific area within the sheet(s). When provided,
+               only cells within this range are searched. If 'sheet' is not provided,
+               the same range is applied to every sheet.
         case_sensitive: Whether the search should be case-sensitive (default False)
         max_results: Maximum number of results to return (default 50)
 
@@ -1477,14 +1482,33 @@ def find_in_spreadsheet(spreadsheet_id: str,
 
         search_query = query if case_sensitive else query.lower()
 
+        # When a range is specified, compute the row/column offsets so that cell
+        # addresses in the results reflect the true A1 position rather than
+        # assuming the data starts at A1.
+        start_col = 0
+        start_row = 0
+        if range:
+            try:
+                parsed = _parse_a1_notation(range)
+                start_col = parsed.get('startColumnIndex', 0)
+                start_row = parsed.get('startRowIndex', 0)
+            except ValueError:
+                pass
+
         for sheet_name in sheets_to_search:
             if len(results) >= max_results:
                 break
 
-            # Get all data from the sheet
+            # Build the API range: restrict to a specific range if provided
+            if range:
+                api_range = f"{sheet_name}!{range}"
+            else:
+                api_range = sheet_name
+
+            # Get data from the sheet (or specific range within it)
             response = sheets_service.spreadsheets().values().get(
                 spreadsheetId=spreadsheet_id,
-                range=sheet_name
+                range=api_range
             ).execute()
 
             values = response.get('values', [])
@@ -1501,7 +1525,7 @@ def find_in_spreadsheet(spreadsheet_id: str,
                     compare_value = cell_str if case_sensitive else cell_str.lower()
 
                     if search_query in compare_value:
-                        cell_ref = f"{_column_index_to_letter(col_idx)}{row_idx + 1}"
+                        cell_ref = f"{_column_index_to_letter(start_col + col_idx)}{start_row + row_idx + 1}"
                         results.append({
                             'sheet': sheet_name,
                             'cell': cell_ref,
