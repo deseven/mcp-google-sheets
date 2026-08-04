@@ -17,7 +17,11 @@
 >
 > It's a clear design flaw: **write tools require cell IDs, read tools don't provide them**. The original author [decided to not address it](https://github.com/xing5/mcp-google-sheets/issues/8), hence the reason for the fork.
 >
-> **What changed:** every read tool now returns **A1-addressed output** — each row is a map of cell address → value (e.g. `{"B2": "x"}`), so the exact identifier needed for a subsequent edit is always present in the read result. See the tool reference below for details.
+> **What changed:**
+> * Every read tool now returns **A1-addressed output** — each row is a map of cell address → value (e.g. `{"B2": "x"}`), so the exact identifier needed for a subsequent edit is always present in the read result.
+> * `find_in_spreadsheet` is more powerful: it requires an explicit `sheet` and `range` (pass `'*'` to search a whole sheet), matches the query as a **regular expression** (e.g. `'^foo'` finds cells starting with "foo"), and **paginates** results (`max_results`/`offset` with `has_more`/`next_offset`).
+>
+> See the tool reference below for details.
 >
 > This fork is not published to PyPI. Run it directly from this repository with `uvx` (see Quick Start below).
 
@@ -98,6 +102,7 @@ You're ready! Start issuing commands via your MCP client.
 ## ✨ Key Features
 
 *   **A1-Addressed Reads:** Read tools return cells keyed by A1 address (e.g. `{"B2": "x"}`), so follow-up edits never require manual row/column counting.
+*   **Powerful Cell Search:** `find_in_spreadsheet` matches cells by regular expression, scoped to an explicit sheet and range (`'*'` for the whole sheet), with paginated results.
 *   **Seamless Integration:** Connects directly to Google Drive & Google Sheets APIs.
 *   **Comprehensive Tools:** Offers a wide range of operations (CRUD, listing, batching, sharing, formatting, etc.).
 *   **Flexible Authentication:** Supports **Service Accounts (recommended)**, OAuth 2.0, and direct credential injection via environment variables.
