@@ -653,6 +653,62 @@ class ToolRequestConstructionTests(unittest.TestCase):
         self.assertIn("range is required", result["error"])
         self.assertEqual(result["results"], [])
 
+    def test_find_in_spreadsheet_regex_anchor_matches_string_start(self):
+        sheets_service = RecordingSheetsService()
+        values_resource = sheets_service.spreadsheets_resource.values_resource
+        values_resource.get_results["Sheet1"] = {
+            "values": [["Ada Lovelace"], ["Alan Turing"], ["Grace Ada"]]
+        }
+
+        result = server.find_in_spreadsheet(
+            "spreadsheet-id",
+            "^ada",
+            sheet="Sheet1",
+            range="*",
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+
+        # Only the cell that starts with "ada" (case-insensitive) matches.
+        self.assertEqual(
+            result["results"],
+            [{"sheet": "Sheet1", "cell": "A1", "value": "Ada Lovelace"}],
+        )
+
+    def test_find_in_spreadsheet_regex_case_sensitive(self):
+        sheets_service = RecordingSheetsService()
+        values_resource = sheets_service.spreadsheets_resource.values_resource
+        values_resource.get_results["Sheet1"] = {
+            "values": [["Ada Lovelace"], ["ada lovelace"]]
+        }
+
+        result = server.find_in_spreadsheet(
+            "spreadsheet-id",
+            "^ada",
+            sheet="Sheet1",
+            range="*",
+            case_sensitive=True,
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+
+        self.assertEqual(
+            result["results"],
+            [{"sheet": "Sheet1", "cell": "A2", "value": "ada lovelace"}],
+        )
+
+    def test_find_in_spreadsheet_invalid_regex_returns_error(self):
+        sheets_service = RecordingSheetsService()
+
+        result = server.find_in_spreadsheet(
+            "spreadsheet-id",
+            "([unclosed",
+            sheet="Sheet1",
+            range="*",
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+
+        self.assertIn("Invalid regular expression", result["error"])
+        self.assertEqual(result["results"], [])
+
     def test_find_in_spreadsheet_unknown_sheet_returns_error(self):
         sheets_service = RecordingSheetsService()
 

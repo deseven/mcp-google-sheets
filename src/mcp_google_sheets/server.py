@@ -1446,17 +1446,20 @@ def find_in_spreadsheet(spreadsheet_id: str,
                         offset: int = 0,
                         ctx: Context = None) -> Dict[str, Any]:
     """
-    Find cells containing a specific value in a sheet of a Google Spreadsheet.
+    Find cells with values matching a regular expression in a sheet of a Google Spreadsheet.
     Results are paginated because the Sheets API returns all values in a range
     at once; pagination is applied over the collected matches.
 
     Args:
         spreadsheet_id: The ID of the spreadsheet (found in the URL)
-        query: The text to search for in cell values
+        query: Regular expression matched against cell values. A plain word matches
+               any cell containing it; use anchors for positional matching, e.g.
+               '^foo' for cells starting with 'foo', 'bar$' for cells ending
+               with 'bar', or '^exact$' for an exact match.
         sheet: The name of the sheet (tab) to search in.
         range: Cell range in A1 notation (e.g., 'A1:C10', 'B:B', '1:5') to search
                within the sheet. Pass '*' to search the whole sheet.
-        case_sensitive: Whether the search should be case-sensitive (default False)
+        case_sensitive: Whether the regex match should be case-sensitive (default False)
         max_results: Maximum number of results to return per page (default 50)
         offset: Zero-based offset of the first result to return (default 0)
 
@@ -1476,6 +1479,18 @@ def find_in_spreadsheet(spreadsheet_id: str,
         elif not range.strip():
             return {
                 'error': "range is required: pass an A1 range (e.g. 'A1:C10') or '*' for the whole sheet",
+                'results': [],
+                'has_more': False,
+                'next_offset': None,
+            }
+
+        import re
+
+        try:
+            search_pattern = re.compile(query, 0 if case_sensitive else re.IGNORECASE)
+        except re.error as e:
+            return {
+                'error': f"Invalid regular expression '{query}': {e}",
                 'results': [],
                 'has_more': False,
                 'next_offset': None,
@@ -1501,7 +1516,6 @@ def find_in_spreadsheet(spreadsheet_id: str,
                 'next_offset': None,
             }
 
-        search_query = query if case_sensitive else query.lower()
         max_results = max(1, max_results)
         offset = max(0, offset)
         # We only need enough matches to fill the requested page; stop early.
@@ -1547,9 +1561,8 @@ def find_in_spreadsheet(spreadsheet_id: str,
                         break
 
                     cell_str = str(cell_value)
-                    compare_value = cell_str if case_sensitive else cell_str.lower()
 
-                    if search_query in compare_value:
+                    if search_pattern.search(cell_str):
                         cell_ref = f"{_column_index_to_letter(start_col + col_idx)}{start_row + row_idx + 1}"
                         matches.append({
                             'sheet': sheet_name,
