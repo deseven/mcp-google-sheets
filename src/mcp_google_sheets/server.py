@@ -1439,48 +1439,73 @@ def _split_chart_source_ranges(source_range: Dict[str, int]) -> tuple[Dict[str, 
 )
 def find_in_spreadsheet(spreadsheet_id: str,
                         query: str,
-                        sheet: Optional[str] = None,
-                        range: Optional[str] = None,
+                        sheet: str,
+                        range: str,
                         case_sensitive: bool = False,
                         max_results: int = 50,
-                        ctx: Context = None) -> List[Dict[str, Any]]:
+                        offset: int = 0,
+                        ctx: Context = None) -> Dict[str, Any]:
     """
-    Find cells containing a specific value in a Google Spreadsheet.
+    Find cells containing a specific value in a sheet of a Google Spreadsheet.
+    Results are paginated because the Sheets API returns all values in a range
+    at once; pagination is applied over the collected matches.
 
     Args:
         spreadsheet_id: The ID of the spreadsheet (found in the URL)
         query: The text to search for in cell values
-        sheet: Optional sheet name to search in. If not provided, searches all sheets.
-        range: Optional cell range in A1 notation (e.g., 'A1:C10', 'B:B', '1:5') to
-               restrict the search to a specific area within the sheet(s). When provided,
-               only cells within this range are searched. If 'sheet' is not provided,
-               the same range is applied to every sheet.
+        sheet: The name of the sheet (tab) to search in.
+        range: Cell range in A1 notation (e.g., 'A1:C10', 'B:B', '1:5') to search
+               within the sheet. Pass '*' to search the whole sheet.
         case_sensitive: Whether the search should be case-sensitive (default False)
-        max_results: Maximum number of results to return (default 50)
+        max_results: Maximum number of results to return per page (default 50)
+        offset: Zero-based offset of the first result to return (default 0)
 
     Returns:
-        List of found cells with their location (sheet, cell in A1 notation) and value
+        Dict with:
+        - results: List of found cells with their location (sheet, cell in A1 notation) and value
+        - has_more: Whether more matches exist beyond this page
+        - next_offset: The offset to pass for the next page, or None if no more results
     """
     sheets_service = ctx.request_context.lifespan_context.sheets_service
-    results = []
+    matches = []
 
     try:
-        # Get spreadsheet metadata to find all sheets
+        # Normalize the "whole sheet" alias to an unbounded search.
+        if range.strip() == '*':
+            range = None
+        elif not range.strip():
+            return {
+                'error': "range is required: pass an A1 range (e.g. 'A1:C10') or '*' for the whole sheet",
+                'results': [],
+                'has_more': False,
+                'next_offset': None,
+            }
+
+        # Get spreadsheet metadata to resolve the target sheet
         spreadsheet = sheets_service.spreadsheets().get(
             spreadsheetId=spreadsheet_id,
             fields='sheets(properties(title,sheetId))'
         ).execute()
 
-        sheets_to_search = []
-        for s in spreadsheet.get('sheets', []):
-            sheet_title = s.get('properties', {}).get('title')
-            if sheet is None or sheet_title == sheet:
-                sheets_to_search.append(sheet_title)
+        sheets_to_search = [
+            s.get('properties', {}).get('title')
+            for s in spreadsheet.get('sheets', [])
+            if s.get('properties', {}).get('title') == sheet
+        ]
 
         if not sheets_to_search:
-            return [{'error': f"Sheet '{sheet}' not found"}]
+            return {
+                'error': f"Sheet '{sheet}' not found",
+                'results': [],
+                'has_more': False,
+                'next_offset': None,
+            }
 
         search_query = query if case_sensitive else query.lower()
+        max_results = max(1, max_results)
+        offset = max(0, offset)
+        # We only need enough matches to fill the requested page; stop early.
+        limit = offset + max_results
 
         # When a range is specified, compute the row/column offsets so that cell
         # addresses in the results reflect the true A1 position rather than
@@ -1496,7 +1521,7 @@ def find_in_spreadsheet(spreadsheet_id: str,
                 pass
 
         for sheet_name in sheets_to_search:
-            if len(results) >= max_results:
+            if len(matches) >= limit:
                 break
 
             # Build the API range: restrict to a specific range if provided
@@ -1514,11 +1539,11 @@ def find_in_spreadsheet(spreadsheet_id: str,
             values = response.get('values', [])
 
             for row_idx, row in enumerate(values):
-                if len(results) >= max_results:
+                if len(matches) >= limit:
                     break
 
                 for col_idx, cell_value in enumerate(row):
-                    if len(results) >= max_results:
+                    if len(matches) >= limit:
                         break
 
                     cell_str = str(cell_value)
@@ -1526,16 +1551,28 @@ def find_in_spreadsheet(spreadsheet_id: str,
 
                     if search_query in compare_value:
                         cell_ref = f"{_column_index_to_letter(start_col + col_idx)}{start_row + row_idx + 1}"
-                        results.append({
+                        matches.append({
                             'sheet': sheet_name,
                             'cell': cell_ref,
                             'value': cell_value
                         })
 
-        return results
+        page = matches[offset:offset + max_results]
+        # We stopped collecting at `limit`, so hitting it implies there may be more.
+        has_more = len(matches) >= limit
+        return {
+            'results': page,
+            'has_more': has_more,
+            'next_offset': offset + max_results if has_more else None,
+        }
 
     except Exception as e:
-        return [{'error': f'Search failed: {str(e)}'}]
+        return {
+            'error': f'Search failed: {str(e)}',
+            'results': [],
+            'has_more': False,
+            'next_offset': None,
+        }
 
 
 @tool(

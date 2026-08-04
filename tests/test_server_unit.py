@@ -600,15 +600,72 @@ class ToolRequestConstructionTests(unittest.TestCase):
         values_resource.get_results["Sheet1"] = {
             "values": [["Name", "Role"], ["Ada Lovelace", "Engineer"]]
         }
-        values_resource.get_results["Data"] = {"values": [["Other"]]}
 
         result = server.find_in_spreadsheet(
             "spreadsheet-id",
             "ada",
+            sheet="Sheet1",
+            range="*",
             ctx=fake_ctx(sheets_service=sheets_service),
         )
 
-        self.assertEqual(result, [{"sheet": "Sheet1", "cell": "A2", "value": "Ada Lovelace"}])
+        self.assertEqual(
+            result["results"],
+            [{"sheet": "Sheet1", "cell": "A2", "value": "Ada Lovelace"}],
+        )
+        self.assertFalse(result["has_more"])
+        self.assertIsNone(result["next_offset"])
+
+    def test_find_in_spreadsheet_star_alias_searches_whole_sheet(self):
+        sheets_service = RecordingSheetsService()
+        values_resource = sheets_service.spreadsheets_resource.values_resource
+        values_resource.get_results["Data"] = {
+            "values": [["x", "Ada"], ["y", "z"]]
+        }
+
+        result = server.find_in_spreadsheet(
+            "spreadsheet-id",
+            "ada",
+            sheet="Data",
+            range="*",
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+
+        # Whole-sheet search requests the sheet by name (no A1 suffix).
+        _, call = values_resource.calls[-1]
+        self.assertEqual(call["range"], "Data")
+        self.assertEqual(
+            result["results"],
+            [{"sheet": "Data", "cell": "B1", "value": "Ada"}],
+        )
+
+    def test_find_in_spreadsheet_requires_range(self):
+        sheets_service = RecordingSheetsService()
+
+        result = server.find_in_spreadsheet(
+            "spreadsheet-id",
+            "ada",
+            sheet="Sheet1",
+            range="   ",
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+
+        self.assertIn("range is required", result["error"])
+        self.assertEqual(result["results"], [])
+
+    def test_find_in_spreadsheet_unknown_sheet_returns_error(self):
+        sheets_service = RecordingSheetsService()
+
+        result = server.find_in_spreadsheet(
+            "spreadsheet-id",
+            "ada",
+            sheet="Nope",
+            range="*",
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+
+        self.assertIn("not found", result["error"])
+        self.assertEqual(result["results"], [])
 
     def test_find_in_spreadsheet_with_range_restricts_search_and_fixes_addresses(self):
         sheets_service = RecordingSheetsService()
@@ -629,7 +686,7 @@ class ToolRequestConstructionTests(unittest.TestCase):
         # Only the "B2:D10" range is requested, and cell addresses are offset
         # so that the first returned row maps to row 2, column B.
         self.assertEqual(
-            result,
+            result["results"],
             [{"sheet": "Sheet1", "cell": "B3", "value": "Ada Lovelace"}],
         )
 
@@ -650,7 +707,7 @@ class ToolRequestConstructionTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            result,
+            result["results"],
             [{"sheet": "Sheet1", "cell": "B2", "value": "Engineer"}],
         )
 
@@ -671,9 +728,63 @@ class ToolRequestConstructionTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            result,
+            result["results"],
             [{"sheet": "Sheet1", "cell": "C5", "value": "Ada"}],
         )
+
+    def test_find_in_spreadsheet_paginates_results(self):
+        sheets_service = RecordingSheetsService()
+        values_resource = sheets_service.spreadsheets_resource.values_resource
+        values_resource.get_results["Sheet1"] = {
+            "values": [["ada"], ["ada"], ["ada"], ["ada"], ["ada"], ["ada"]]
+        }
+
+        first = server.find_in_spreadsheet(
+            "spreadsheet-id",
+            "ada",
+            sheet="Sheet1",
+            range="*",
+            max_results=4,
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+        self.assertEqual(len(first["results"]), 4)
+        self.assertTrue(first["has_more"])
+        self.assertEqual(first["next_offset"], 4)
+
+        second = server.find_in_spreadsheet(
+            "spreadsheet-id",
+            "ada",
+            sheet="Sheet1",
+            range="*",
+            max_results=4,
+            offset=first["next_offset"],
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+        self.assertEqual(len(second["results"]), 2)
+        self.assertFalse(second["has_more"])
+        self.assertIsNone(second["next_offset"])
+
+        # No overlap between pages
+        first_cells = {(r["sheet"], r["cell"]) for r in first["results"]}
+        second_cells = {(r["sheet"], r["cell"]) for r in second["results"]}
+        self.assertTrue(first_cells.isdisjoint(second_cells))
+
+    def test_find_in_spreadsheet_offset_beyond_results_returns_empty_page(self):
+        sheets_service = RecordingSheetsService()
+        values_resource = sheets_service.spreadsheets_resource.values_resource
+        values_resource.get_results["Sheet1"] = {"values": [["ada"]]}
+
+        result = server.find_in_spreadsheet(
+            "spreadsheet-id",
+            "ada",
+            sheet="Sheet1",
+            range="*",
+            offset=100,
+            ctx=fake_ctx(sheets_service=sheets_service),
+        )
+        self.assertEqual(result["results"], [])
+        self.assertFalse(result["has_more"])
+        self.assertIsNone(result["next_offset"])
 
     def test_add_chart_rejects_invalid_chart_type_before_api_call(self):
         sheets_service = RecordingSheetsService()

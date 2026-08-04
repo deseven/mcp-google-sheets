@@ -257,7 +257,9 @@ class GoogleSheetsIntegrationTests(unittest.TestCase):
         found = self.wait_for_search_result(primary_title, primary_id)
         self.assertTrue(any(sheet.get("id") == primary_id for sheet in found))
 
-        found_cells = server.find_in_spreadsheet(primary_id, "Ada", ctx=self.ctx)
+        found_cells = server.find_in_spreadsheet(
+            primary_id, "Ada", sheet="Sheet1", range="*", ctx=self.ctx
+        )["results"]
         self.assertTrue(
             any(cell["sheet"] == "Sheet1" and cell["cell"] == "A2" for cell in found_cells),
             found_cells,
